@@ -1,0 +1,23 @@
+{
+  "name": "TVET Simulation Lab",
+  "short_name": "TVET Sim Lab",
+  "description": "Interactive SOD, CSA and ETE simulations for TVET students.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070b12",
+  "theme_color": "#070b12",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ]
+}
