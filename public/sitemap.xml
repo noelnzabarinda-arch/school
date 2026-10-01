@@ -1,10 +1,60 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
-  <url><loc>/sod</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>
-  <url><loc>/csa</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>
-  <url><loc>/ete</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>
-  <url><loc>/simulations</loc><changefreq>weekly</changefreq><priority>0.95</priority></url>
-  <url><loc>/quiz</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>/contact</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+
+  <!-- Homepage -->
+  <url>
+    <loc>https://tvetsimulation.netlify.app/</loc>
+    <lastmod>2026-10-01</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+
+  <!-- SOD -->
+  <url>
+    <loc>https://tvetsimulation.netlify.app/sod</loc>
+    <lastmod>2026-10-01</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- CSA -->
+  <url>
+    <loc>https://tvetsimulation.netlify.app/csa</loc>
+    <lastmod>2026-10-01</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- ETE -->
+  <url>
+    <loc>https://tvetsimulation.netlify.app/ete</loc>
+    <lastmod>2026-10-01</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- Simulations -->
+  <url>
+    <loc>https://tvetsimulation.netlify.app/simulations</loc>
+    <lastmod>2026-10-01</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.95</priority>
+  </url>
+
+  <!-- Quiz -->
+  <url>
+    <loc>https://tvetsimulation.netlify.app/quiz</loc>
+    <lastmod>2026-10-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Contact -->
+  <url>
+    <loc>https://tvetsimulation.netlify.app/contact</loc>
+    <lastmod>2026-10-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+
 </urlset>
