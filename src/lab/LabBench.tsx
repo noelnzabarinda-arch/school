@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { SimId } from '../data/sims'
 import { SIMS } from '../data/sims'
 
 type Status = 'ready' | 'running' | 'paused' | 'completed' | 'error'
 type Speed = 'slow' | 'normal' | 'fast'
 const SPEED_MS: Record<Speed, number> = { slow: 900, normal: 450, fast: 120 }
+const CPU_PHASES = ['FETCH', 'DECODE', 'EXECUTE', 'STORE']
 const rnd = (a: number, b: number) => Math.floor(Math.random() * (b - a + 1)) + a
 const fmt = (x: number) => String(Number(x.toPrecision(6)))
 
@@ -459,72 +460,162 @@ function NetworkLab() {
   )
 }
 
+type CpuInstruction = { op: 'LOAD' | 'STORE' | 'ADD' | 'SUB' | 'INC' | 'DEC'; operand?: number }
+type CpuMachine = {
+  pc: number
+  acc: number
+  phase: number
+  ir: CpuInstruction | null
+  irAddress: number | null
+  active: 'pc' | 'cu' | 'alu' | 'reg' | ''
+  cycles: number
+  data: number[]
+  status: Status
+  explain: string
+}
+
+function parseCpuProgram(source: string): { instructions: CpuInstruction[]; error: string } {
+  const lines = source.split('\n').map((line, index) => ({ text: line.trim(), number: index + 1 })).filter((line) => line.text)
+  const instructions: CpuInstruction[] = []
+  for (const { text, number } of lines) {
+    const match = /^(LOAD|STORE|ADD|SUB|INC|DEC)(?:\s+(-?\d+))?$/i.exec(text)
+    if (!match) return { instructions, error: `Line ${number}: "${text}" is not a valid instruction.` }
+    const op = match[1].toUpperCase() as CpuInstruction['op']
+    const operand = match[2] === undefined ? undefined : Number(match[2])
+    if ((op === 'LOAD' || op === 'STORE' || op === 'ADD' || op === 'SUB') && operand === undefined) {
+      return { instructions, error: `Line ${number}: ${op} requires an operand.` }
+    }
+    if ((op === 'INC' || op === 'DEC') && operand !== undefined) {
+      return { instructions, error: `Line ${number}: ${op} does not take an operand.` }
+    }
+    if (op === 'STORE' && (operand! < 0 || operand! > 15)) {
+      return { instructions, error: `Line ${number}: STORE address must be between 0 and 15.` }
+    }
+    instructions.push({ op, operand })
+  }
+  if (instructions.length === 0) return { instructions, error: 'Enter at least one instruction.' }
+  return { instructions, error: '' }
+}
+
 function CpuLab() {
   const DEF = 'LOAD 5\nADD 3\nSTORE 8'
   const [progText, setProgText] = useState(DEF)
-  const [pc, setPc] = useState(0)
-  const [acc, setAcc] = useState(0)
-  const [ph, setPh] = useState(-1)
-  const [ir, setIr] = useState<{ op: string; v?: number } | null>(null)
-  const [act, setAct] = useState('')
-  const [cyc, setCyc] = useState(0)
-  const [data, setData] = useState<number[]>(() => Array(16).fill(0))
-  const [status, setStatus] = useState<Status>('ready')
-  const [explain, setExplain] = useState('Each instruction goes through FETCH → DECODE → EXECUTE → STORE.')
-  const [err, setErr] = useState('')
+  const [machine, setMachine] = useState<CpuMachine>({
+    pc: 0, acc: 0, phase: -1, ir: null, irAddress: null, active: '', cycles: 0,
+    data: Array(16).fill(0), status: 'ready', explain: 'Each instruction goes through FETCH → DECODE → EXECUTE → STORE.',
+  })
+  const [autoRun, setAutoRun] = useState(false)
+  const machineRef = useRef(machine)
   const timer = useRef<number | null>(null)
-  const PH = ['FETCH', 'DECODE', 'EXECUTE', 'STORE']
+  const stepRef = useRef<() => void>(() => {})
 
-  const parse = () => {
-    const ln = progText.split('\n').map((x) => x.trim()).filter(Boolean)
-    const prog: { op: string; v?: number }[] = []
-    for (let i = 0; i < ln.length; i++) {
-      const m = /^(LOAD|STORE|ADD|SUB|INC|DEC)(?:\s+(-?\d+))?$/i.exec(ln[i])
-      if (!m) { setErr(`Line ${i + 1}: "${ln[i]}" is not valid.`); return null }
-      const op = m[1].toUpperCase()
-      const v = m[2] === undefined ? undefined : +m[2]
-      prog.push({ op, v })
-    }
-    setErr('')
-    return prog
-  }
-
-  const step = () => {
-    const prog = parse()
-    if (!prog) { setStatus('error'); return }
-    if (pc >= prog.length) {
-      setStatus('completed')
-      setExplain('Program finished (HALT).')
-      if (timer.current) window.clearInterval(timer.current)
+  const program = useMemo(() => parseCpuProgram(progText), [progText])
+  const clearTimer = useCallback(() => {
+    if (timer.current !== null) window.clearInterval(timer.current)
+    timer.current = null
+  }, [])
+  const commit = useCallback((next: CpuMachine) => {
+    machineRef.current = next
+    setMachine(next)
+  }, [])
+  const step = useCallback(() => {
+    if (program.error) {
+      clearTimer()
+      setAutoRun(false)
+      commit({ ...machineRef.current, status: 'error', explain: program.error })
       return
     }
-    const nextPh = (ph + 1) % 4
-    setPh(nextPh)
-    const phase = PH[nextPh]
-    const m = (x: number) => ((x % 256) + 256) % 256
-    if (phase === 'FETCH') {
-      setIr(prog[pc])
-      setAct('pc')
-      setExplain(`Fetching instruction ${pc} from memory.`)
-    } else if (phase === 'DECODE') {
-      setAct('cu')
-      setExplain(`Control unit decodes ${prog[pc].op}.`)
-    } else if (phase === 'EXECUTE') {
-      setAct('alu')
-      const { op, v = 0 } = prog[pc]
-      setAcc((cur) => (op === 'LOAD' ? m(v) : op === 'ADD' ? m(cur + v) : op === 'SUB' ? m(cur - v) : op === 'INC' ? m(cur + 1) : op === 'DEC' ? m(cur - 1) : cur))
-      setExplain(`ALU executes ${op}.`)
+    const current = machineRef.current
+    const phase = (current.phase + 1) % CPU_PHASES.length
+    const next: CpuMachine = { ...current, phase, active: '', status: autoRun ? 'running' : 'paused' }
+    const instruction = current.ir
+    const byte = (value: number) => ((value % 256) + 256) % 256
+
+    if (CPU_PHASES[phase] === 'FETCH') {
+      if (current.pc >= program.instructions.length) {
+        clearTimer()
+        setAutoRun(false)
+        commit({ ...current, status: 'completed', explain: 'Program finished (HALT).' })
+        return
+      }
+      const address = current.pc
+      next.ir = program.instructions[address]
+      next.irAddress = address
+      next.pc = address + 1
+      next.active = 'pc'
+      next.explain = `Fetched instruction ${address} into the instruction register; PC advanced to ${next.pc}.`
+    } else if (CPU_PHASES[phase] === 'DECODE') {
+      if (!instruction) return
+      next.active = 'cu'
+      next.explain = `Control unit decoded ${instruction.op}${instruction.operand === undefined ? '' : ` ${instruction.operand}`}.`
+    } else if (CPU_PHASES[phase] === 'EXECUTE') {
+      if (!instruction) return
+      next.active = 'alu'
+      const operand = instruction.operand ?? 0
+      if (instruction.op === 'LOAD') next.acc = byte(operand)
+      if (instruction.op === 'ADD') next.acc = byte(current.acc + operand)
+      if (instruction.op === 'SUB') next.acc = byte(current.acc - operand)
+      if (instruction.op === 'INC') next.acc = byte(current.acc + 1)
+      if (instruction.op === 'DEC') next.acc = byte(current.acc - 1)
+      next.explain = instruction.op === 'STORE'
+        ? `STORE decoded address ${operand}; the data bus will write ACC during the store phase.`
+        : `${instruction.op} executed; ACC is now ${next.acc} (8-bit result).`
     } else {
-      setAct('reg')
-      const ins = prog[pc]
-      if (ins.op === 'STORE' && ins.v !== undefined) {
-        setData((d) => { const n = [...d]; n[ins.v!] = acc; return n })
-        setExplain(`ACC (${acc}) written to address ${ins.v}.`)
-      } else setExplain('Result stays in ACC.')
-      setPc((p) => p + 1)
-      setCyc((c) => c + 1)
+      if (!instruction) return
+      next.active = 'reg'
+      if (instruction.op === 'STORE' && instruction.operand !== undefined) {
+        next.data = [...current.data]
+        next.data[instruction.operand] = current.acc
+        next.explain = `ACC (${current.acc}) written to data memory address ${instruction.operand}.`
+      } else {
+        next.explain = `Instruction complete; ACC holds ${current.acc}.`
+      }
+      next.cycles = current.cycles + 1
+      if (next.pc >= program.instructions.length) {
+        next.status = 'completed'
+        next.explain += ' Program finished (HALT).'
+        clearTimer()
+        setAutoRun(false)
+      }
     }
-    setStatus('running')
+    commit(next)
+  }, [autoRun, clearTimer, commit, program])
+  useEffect(() => {
+    stepRef.current = step
+  }, [step])
+  useEffect(() => {
+    if (!autoRun) return
+    timer.current = window.setInterval(() => stepRef.current(), 450)
+    return clearTimer
+  }, [autoRun, clearTimer])
+
+  const start = () => {
+    if (autoRun) {
+      setAutoRun(false)
+      clearTimer()
+      commit({ ...machineRef.current, status: 'paused', explain: 'Execution paused.' })
+      return
+    }
+    if (program.error) {
+      commit({ ...machineRef.current, status: 'error', explain: program.error })
+      return
+    }
+    if (machine.status === 'completed' || machine.status === 'error') reset()
+    setAutoRun(true)
+    commit({ ...machineRef.current, status: 'running' })
+  }
+  const reset = () => {
+    setAutoRun(false)
+    clearTimer()
+    commit({
+      pc: 0, acc: 0, phase: -1, ir: null, irAddress: null, active: '', cycles: 0,
+      data: Array(16).fill(0), status: 'ready', explain: 'Each instruction goes through FETCH → DECODE → EXECUTE → STORE.',
+    })
+  }
+  const singleStep = () => {
+    setAutoRun(false)
+    clearTimer()
+    step()
   }
 
   return (
@@ -532,36 +623,39 @@ function CpuLab() {
       <div className="ctl">
         <label style={{ gridColumn: '1 / -1' }}>
           Program
-          <textarea value={progText} onChange={(e) => setProgText(e.target.value)} rows={5} />
+          <textarea value={progText} disabled={autoRun} onChange={(e) => { setProgText(e.target.value); reset() }} rows={5} spellCheck={false} />
         </label>
       </div>
-      {err ? <p className="err">{err}</p> : null}
+      {program.error ? <p className="err" role="alert">{program.error}</p> : null}
       <div className="btns">
-        <button className="btn p" onClick={() => { timer.current = window.setInterval(step, 450) }}>Start</button>
-        <button className="btn" onClick={step}>Step</button>
-        <button className="btn" onClick={() => { if (timer.current) window.clearInterval(timer.current); setPc(0); setAcc(0); setPh(-1); setIr(null); setCyc(0); setData(Array(16).fill(0)); setStatus('ready') }}>Reset</button>
+        <button className="btn p" onClick={start}>{autoRun ? 'Pause' : 'Start'}</button>
+        <button className="btn" onClick={singleStep} disabled={autoRun || machine.status === 'completed'}>Step</button>
+        <button className="btn" onClick={reset}>Reset</button>
       </div>
       <div className="stage">
         <div className="cpu">
-          <div className={`cbx${act === 'pc' ? ' act' : ''}`}>PROGRAM COUNTER<br />PC = {String(pc).padStart(2, '0')}</div>
-          <div className={`cbx${act === 'cu' ? ' act' : ''}`}>CONTROL UNIT<br />{ir ? `${ir.op} ${ir.v ?? ''}` : 'idle'}</div>
-          <div className={`cbx${act === 'alu' ? ' act' : ''}`}>ALU<br />{act === 'alu' ? 'computing' : 'idle'}</div>
-          <div className={`cbx${act === 'reg' ? ' act' : ''}`}>REGISTERS<br />ACC = {String(acc).padStart(2, '0')}</div>
+          <div className={`cbx${machine.active === 'pc' ? ' act' : ''}`}>PROGRAM COUNTER<br />PC = {String(machine.pc).padStart(2, '0')}</div>
+          <div className={`cbx${machine.active === 'cu' ? ' act' : ''}`}>INSTRUCTION REGISTER<br />{machine.ir ? `${machine.ir.op} ${machine.ir.operand ?? ''}` : 'empty'}</div>
+          <div className={`cbx${machine.active === 'alu' ? ' act' : ''}`}>ALU<br />{machine.active === 'alu' ? CPU_PHASES[machine.phase] : 'idle'}</div>
+          <div className={`cbx${machine.active === 'reg' ? ' act' : ''}`}>ACCUMULATOR<br />ACC = {String(machine.acc).padStart(3, '0')}</div>
+        </div>
+        <div className="seg" aria-label="Instruction cycle">
+          {CPU_PHASES.map((phase, index) => <span key={phase} className={machine.phase === index ? 'on' : ''}>{phase}</span>)}
         </div>
         <div className="mem">
-          {parse()?.map((p, i) => (
-            <div key={i} className={i === pc && ph >= 0 ? 'cur' : ''}>
-              {String(i).padStart(2, '0')}: {p.op} {p.v ?? ''}
+          {program.instructions.map((instruction, address) => (
+            <div key={`i${address}`} className={machine.irAddress === address ? 'cur' : ''}>
+              I[{String(address).padStart(2, '0')}] {instruction.op} {instruction.operand ?? ''}
             </div>
           ))}
-          {data.map((d, i) =>
-            d ? (
-              <div key={`d${i}`}>[D{i}] = {d}</div>
-            ) : null,
-          )}
+        </div>
+        <div className="mem" aria-label="Data memory">
+          {machine.data.map((value, address) => (
+            <div key={`d${address}`} className={value ? 'cur' : ''}>D[{String(address).padStart(2, '0')}] = {value}</div>
+          ))}
         </div>
       </div>
-      <Side trade="csa" name="CPU Architecture Simulator" status={status} inputs={`${progText.split('\n').filter((x) => x.trim()).length} instructions`} results={{ PC: String(pc).padStart(2, '0'), ACC: String(acc).padStart(2, '0'), Cycles: cyc }} explain={explain} />
+      <Side trade="csa" name="CPU Architecture Simulator" status={machine.status} inputs={`${program.instructions.length} instructions`} results={{ PC: String(machine.pc).padStart(2, '0'), IR: machine.ir ? `${machine.ir.op} ${machine.ir.operand ?? ''}` : '—', ACC: String(machine.acc).padStart(3, '0'), Cycles: machine.cycles }} explain={machine.explain} />
     </>
   )
 }
